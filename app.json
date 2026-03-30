@@ -23,7 +23,7 @@
       "minVersion": "4.0"
     }
   },
-  "debug": false,
+  "debug": true,
   "targets": {
     "gt": {
       "module": {

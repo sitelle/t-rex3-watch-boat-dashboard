@@ -1,25 +1,141 @@
 import * as hmUI from "@zos/ui";
 import { getText } from "@zos/i18n";
+import {
+  GESTURE_LEFT,
+  GESTURE_RIGHT,
+  offGesture,
+  onGesture,
+} from "@zos/interaction";
 import { BasePage } from "@zeppos/zml/base-page";
 import {
   DEFAULT_SIGNAL_K_BASE_URL,
+  SIGNAL_K_METRIC_PATHS,
   getSignalKBaseUrl,
-  getSignalKSpeedUrls,
+  getSignalKMetricUrls,
+  setSignalKBaseUrl,
 } from "../../../utils/signal-k.js";
 import {
+  ADMIN_DEBUG_STYLE,
+  ADMIN_HINT_STYLE,
+  ADMIN_OPTION_BUTTON_STYLE,
+  ADMIN_OPTION_Y_POSITIONS,
+  ADMIN_SUBTITLE_STYLE,
+  ADMIN_TITLE_STYLE,
+  ADMIN_URL_BUTTON_STYLE,
+  ADMIN_URL_LABEL_STYLE,
+  METRIC_LABEL_STYLE,
+  METRIC_VALUE_STYLE,
+  PAGE_INDICATOR_STYLE,
   SCREEN_TITLE_STYLE,
-  SPEED_VALUE_STYLE,
-  SPEED_UNIT_STYLE,
+  SETTINGS_BUTTON_STYLE,
   STATUS_TEXT_STYLE,
+  THREE_ROW_Y_POSITIONS,
+  TWO_ROW_Y_POSITIONS,
 } from "zosLoader:./index.page.[pf].layout.js";
-
-const POLL_INTERVAL_MS = 2000;
+import {
+  getRefreshFrequencyConfig,
+  getRefreshFrequencyKey,
+  setRefreshFrequencyKey,
+} from "../../../utils/settings.js";
 const KNOTS_PER_MPS = 1.9438444924406;
+const DEGREES_PER_RADIAN = 180 / Math.PI;
+const MAX_ROWS = 3;
 const STATUS_COLORS = {
   loading: 0x7f8c8d,
   error: 0xff5a5a,
+  partial: 0xf5b642,
   ready: 0x7f8c8d,
 };
+const ADMIN_SELECTED_BUTTON_COLOR = 0x56d8ff;
+const ADMIN_DEFAULT_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.normal_color;
+const ADMIN_PRESSED_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.press_color;
+const RESPONSE_BODY_PREVIEW_LENGTH = 120;
+
+const REFRESH_FREQUENCY_OPTIONS = [
+  {
+    key: "fast",
+    labelKey: "refreshFrequencyFast",
+  },
+  {
+    key: "medium",
+    labelKey: "refreshFrequencyMedium",
+  },
+  {
+    key: "slow",
+    labelKey: "refreshFrequencySlow",
+  },
+];
+
+const SCREEN_DEFINITIONS = [
+  {
+    titleKey: "speedTitle",
+    metricKeys: ["speedThroughWater", "speedOverGround"],
+    metrics: [
+      {
+        label: "SOW",
+        resolveValue: (data) => (data ? data.speedThroughWater : null),
+        formatter: formatSpeedValue,
+      },
+      {
+        label: "SOG",
+        resolveValue: (data) => (data ? data.speedOverGround : null),
+        formatter: formatSpeedValue,
+      },
+    ],
+  },
+  {
+    titleKey: "trueWindTitle",
+    metricKeys: ["trueWindDirection", "trueWindAngle", "trueWindSpeed"],
+    metrics: [
+      {
+        label: "TWD",
+        resolveValue: (data) => (data ? data.trueWindDirection : null),
+        formatter: formatDirectionValue,
+      },
+      {
+        label: "TWA",
+        resolveValue: (data) => (data ? data.trueWindAngle : null),
+        formatter: formatSignedAngleValue,
+      },
+      {
+        label: "TWS",
+        resolveValue: (data) => (data ? data.trueWindSpeed : null),
+        formatter: formatSpeedValue,
+      },
+    ],
+  },
+  {
+    titleKey: "apparentWindTitle",
+    metricKeys: [
+      "apparentWindDirection",
+      "apparentWindAngle",
+      "apparentWindSpeed",
+      "headingTrue",
+      "headingMagnetic",
+    ],
+    metrics: [
+      {
+        label: "AWD",
+        resolveValue: getApparentWindDirection,
+        formatter: formatDirectionValue,
+      },
+      {
+        label: "AWA",
+        resolveValue: (data) => (data ? data.apparentWindAngle : null),
+        formatter: formatSignedAngleValue,
+      },
+      {
+        label: "AWS",
+        resolveValue: (data) => (data ? data.apparentWindSpeed : null),
+        formatter: formatSpeedValue,
+      },
+    ],
+  },
+];
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
 
 function parseResponseBody(body) {
   if (typeof body === "number") {
@@ -47,7 +163,7 @@ function parseResponseBody(body) {
   }
 }
 
-function extractSpeedValue(response) {
+function extractNumericValue(response) {
   if (!response || typeof response.status !== "number") {
     throw new Error("Signal K empty response");
   }
@@ -58,62 +174,326 @@ function extractSpeedValue(response) {
 
   const payload = parseResponseBody(response.body);
 
-  if (typeof payload === "number" && Number.isFinite(payload)) {
+  if (isFiniteNumber(payload)) {
     return payload;
   }
 
   if (
     payload &&
     typeof payload === "object" &&
-    typeof payload.value === "number" &&
-    Number.isFinite(payload.value)
+    isFiniteNumber(payload.value)
   ) {
     return payload.value;
   }
 
-  throw new Error("Signal K speed payload is not numeric");
+  throw new Error("Signal K payload is not numeric");
 }
 
-function formatKnots(speedInMetersPerSecond) {
-  return (speedInMetersPerSecond * KNOTS_PER_MPS).toFixed(1);
+function normalizeDegrees(degrees) {
+  const normalizedDegrees = degrees % 360;
+  return normalizedDegrees < 0 ? normalizedDegrees + 360 : normalizedDegrees;
+}
+
+function normalizeSignedDegrees(degrees) {
+  const normalizedDegrees = normalizeDegrees(degrees);
+  return normalizedDegrees > 180 ? normalizedDegrees - 360 : normalizedDegrees;
+}
+
+function toRoundedBearingDegrees(valueInRadians) {
+  if (!isFiniteNumber(valueInRadians)) {
+    return null;
+  }
+
+  const roundedDegrees = Math.round(
+    normalizeDegrees(valueInRadians * DEGREES_PER_RADIAN),
+  );
+
+  return roundedDegrees === 360 ? 0 : roundedDegrees;
+}
+
+function toRoundedSignedDegrees(valueInRadians) {
+  if (!isFiniteNumber(valueInRadians)) {
+    return null;
+  }
+
+  return Math.round(
+    normalizeSignedDegrees(valueInRadians * DEGREES_PER_RADIAN),
+  );
+}
+
+function formatSpeedValue(valueInMetersPerSecond) {
+  if (!isFiniteNumber(valueInMetersPerSecond)) {
+    return `--.- ${getText("speedUnit")}`;
+  }
+
+  return `${(valueInMetersPerSecond * KNOTS_PER_MPS).toFixed(1)} ${getText(
+    "speedUnit",
+  )}`;
+}
+
+function formatBearingDegrees(directionDegrees) {
+  if (directionDegrees < 10) {
+    return `00${directionDegrees}`;
+  }
+
+  if (directionDegrees < 100) {
+    return `0${directionDegrees}`;
+  }
+
+  return `${directionDegrees}`;
+}
+
+function formatDirectionValue(valueInRadians) {
+  const directionDegrees = toRoundedBearingDegrees(valueInRadians);
+  if (!isFiniteNumber(directionDegrees)) {
+    return "--- deg";
+  }
+
+  return `${formatBearingDegrees(directionDegrees)} deg`;
+}
+
+function formatSignedAngleValue(valueInRadians) {
+  const signedDegrees = toRoundedSignedDegrees(valueInRadians);
+  if (!isFiniteNumber(signedDegrees)) {
+    return "--- deg";
+  }
+
+  return `${signedDegrees} deg`;
+}
+
+function getApparentWindDirection(data) {
+  if (!data) {
+    return null;
+  }
+
+  if (isFiniteNumber(data.apparentWindDirection)) {
+    return data.apparentWindDirection;
+  }
+
+  const heading =
+    isFiniteNumber(data.headingTrue) ?
+      data.headingTrue
+    : isFiniteNumber(data.headingMagnetic) ?
+      data.headingMagnetic
+    : null;
+
+  if (!isFiniteNumber(heading) || !isFiniteNumber(data.apparentWindAngle)) {
+    return null;
+  }
+
+  return heading + data.apparentWindAngle;
+}
+
+function formatPageIndicator(screenIndex) {
+  return `${screenIndex + 1}/${SCREEN_DEFINITIONS.length}`;
+}
+
+function getRefreshIntervalMs(refreshFrequencyKey) {
+  return getRefreshFrequencyConfig(refreshFrequencyKey).intervalMs;
+}
+
+function getErrorMessage(error) {
+  if (error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function getResponseBodyPreview(body) {
+  if (typeof body === "number") {
+    return String(body);
+  }
+
+  if (typeof body !== "string") {
+    return "<non-string body>";
+  }
+
+  const normalizedBody = body.replace(/\s+/g, " ").trim();
+  if (!normalizedBody) {
+    return "<empty body>";
+  }
+
+  return normalizedBody.slice(0, RESPONSE_BODY_PREVIEW_LENGTH);
+}
+
+function formatMetricValueForLog(value) {
+  if (!isFiniteNumber(value)) {
+    return "null";
+  }
+
+  return String(value);
+}
+
+function truncateForDebug(text, maxLength = 80) {
+  if (typeof text !== "string") {
+    return String(text);
+  }
+
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }
 
 Page(
   BasePage({
     name: "boat-dashboard-home.page",
     state: {
-      speedText: "--.-",
-      unitText: "",
-      statusText: "",
-      statusColor: STATUS_COLORS.loading,
+      currentScreenIndex: 0,
+      isAdminOpen: false,
+      refreshFrequencyKey: "slow",
     },
     onInit() {
       this.log("page onInit invoked");
       this.pollingTimer = null;
       this.isRefreshing = false;
+      this.dashboardData = null;
+      this.dashboardState = "loading";
       this.signalKBaseUrl = getSignalKBaseUrl();
-      this.state.unitText = getText("speedUnit");
-      this.state.statusText = getText("loadingState");
+      this.metricLabelWidgets = [];
+      this.metricValueWidgets = [];
+      this.adminOptionButtons = [];
+      this.debugState = {
+        baseUrl: this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
+        screenTitleKey: SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
+        metricKey: "-",
+        status: "-",
+        error: "-",
+        bodyPreview: "-",
+      };
+      this.state.refreshFrequencyKey = getRefreshFrequencyKey();
+      this.pollIntervalMs = getRefreshIntervalMs(this.state.refreshFrequencyKey);
+      this.log(
+        "Signal K init: baseUrl=%s refreshFrequency=%s intervalMs=%s",
+        this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
+        this.state.refreshFrequencyKey,
+        String(this.pollIntervalMs),
+      );
     },
     build() {
       this.log("page build invoked");
-      this.titleWidget = hmUI.createWidget(hmUI.widget.TEXT, SCREEN_TITLE_STYLE);
-      this.speedWidget = hmUI.createWidget(hmUI.widget.TEXT, SPEED_VALUE_STYLE);
-      this.unitWidget = hmUI.createWidget(hmUI.widget.TEXT, SPEED_UNIT_STYLE);
-      this.statusWidget = hmUI.createWidget(hmUI.widget.TEXT, STATUS_TEXT_STYLE);
 
-      this.showLoadingState();
+      this.titleWidget = hmUI.createWidget(hmUI.widget.TEXT, SCREEN_TITLE_STYLE);
+      this.settingsButtonWidget = hmUI.createWidget(hmUI.widget.BUTTON, {
+        ...SETTINGS_BUTTON_STYLE,
+        click_func: () => {
+          this.toggleAdmin();
+        },
+      });
+      this.statusWidget = hmUI.createWidget(hmUI.widget.TEXT, STATUS_TEXT_STYLE);
+      this.pageIndicatorWidget = hmUI.createWidget(
+        hmUI.widget.TEXT,
+        PAGE_INDICATOR_STYLE,
+      );
+      this.adminTitleWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...ADMIN_TITLE_STYLE,
+        visible: false,
+      });
+      this.adminSubtitleWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...ADMIN_SUBTITLE_STYLE,
+        visible: false,
+      });
+      this.adminUrlLabelWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...ADMIN_URL_LABEL_STYLE,
+        visible: false,
+      });
+      this.adminUrlButtonWidget = hmUI.createWidget(hmUI.widget.BUTTON, {
+        ...ADMIN_URL_BUTTON_STYLE,
+        text: truncateForDebug(this.signalKBaseUrl, 30),
+        visible: false,
+        click_func: () => {
+          this.openSignalKUrlKeyboard();
+        },
+      });
+      this.adminHintWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...ADMIN_HINT_STYLE,
+        visible: false,
+      });
+      this.adminDebugWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...ADMIN_DEBUG_STYLE,
+        visible: false,
+      });
+
+      for (let index = 0; index < MAX_ROWS; index += 1) {
+        this.metricLabelWidgets.push(
+          hmUI.createWidget(hmUI.widget.TEXT, METRIC_LABEL_STYLE),
+        );
+        this.metricValueWidgets.push(
+          hmUI.createWidget(hmUI.widget.TEXT, METRIC_VALUE_STYLE),
+        );
+      }
+
+      for (let index = 0; index < REFRESH_FREQUENCY_OPTIONS.length; index += 1) {
+        const option = REFRESH_FREQUENCY_OPTIONS[index];
+        this.adminOptionButtons.push(
+          hmUI.createWidget(hmUI.widget.BUTTON, {
+            ...ADMIN_OPTION_BUTTON_STYLE,
+            y: ADMIN_OPTION_Y_POSITIONS[index],
+            text: getText(option.labelKey),
+            visible: false,
+            click_func: () => {
+              this.updateRefreshFrequency(option.key);
+            },
+          }),
+        );
+      }
+
+      this.registerGestureHandler();
+      this.applyDisplayState();
       this.startPolling();
+    },
+    registerGestureHandler() {
+      onGesture({
+        callback: (gesture) => {
+          if (gesture === GESTURE_LEFT) {
+            this.goToScreen(1);
+            return true;
+          }
+
+          if (gesture === GESTURE_RIGHT) {
+            this.goToScreen(-1);
+            return true;
+          }
+
+          return false;
+        },
+      });
+    },
+    goToScreen(offset) {
+      if (this.state.isAdminOpen) {
+        return;
+      }
+
+      const screenCount = SCREEN_DEFINITIONS.length;
+      const nextScreenIndex =
+        (this.state.currentScreenIndex + offset + screenCount) % screenCount;
+
+      if (nextScreenIndex === this.state.currentScreenIndex) {
+        return;
+      }
+
+      this.state.currentScreenIndex = nextScreenIndex;
+      this.debugState.screenTitleKey = SCREEN_DEFINITIONS[nextScreenIndex].titleKey;
+      this.log(
+        "Screen changed: index=%s titleKey=%s",
+        String(nextScreenIndex),
+        SCREEN_DEFINITIONS[nextScreenIndex].titleKey,
+      );
+      this.applyDisplayState();
+      this.refreshDashboard();
     },
     startPolling() {
       if (this.pollingTimer) {
         return;
       }
 
-      this.refreshSpeed();
+      this.log(
+        "Start polling: intervalMs=%s screen=%s",
+        String(this.pollIntervalMs),
+        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
+      );
+      this.refreshDashboard();
       this.pollingTimer = setInterval(() => {
-        this.refreshSpeed();
-      }, POLL_INTERVAL_MS);
+        this.refreshDashboard();
+      }, this.pollIntervalMs);
     },
     stopPolling() {
       if (!this.pollingTimer) {
@@ -122,90 +502,412 @@ Page(
 
       clearInterval(this.pollingTimer);
       this.pollingTimer = null;
+      this.log("Stop polling");
     },
-    async refreshSpeed() {
+    async refreshDashboard() {
       if (this.isRefreshing) {
+        this.debug("Refresh skipped: previous refresh still running");
         return;
       }
 
       this.isRefreshing = true;
+      this.debugState.baseUrl = getSignalKBaseUrl();
+      this.debugState.screenTitleKey =
+        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey;
+      this.debug(
+        "Refresh start: screen=%s baseUrl=%s",
+        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
+        getSignalKBaseUrl(),
+      );
 
       try {
-        const speedValue = await this.fetchBoatSpeed();
-        this.showSpeedState(formatKnots(speedValue));
+        const dashboardData = await this.fetchDashboardData();
+        this.showDashboardState(dashboardData);
       } catch (error) {
-        this.error(error);
+        this.error("Refresh failed: %s", getErrorMessage(error));
         this.showErrorState();
       } finally {
         this.isRefreshing = false;
+        this.debug("Refresh end");
       }
     },
-    async fetchBoatSpeed() {
-      let lastError = null;
-      const signalKSpeedUrls = getSignalKSpeedUrls();
+    async fetchDashboardData() {
+      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+      const metricKeys = screenDefinition.metricKeys || [];
+      const dashboardData = {
+        ...(this.dashboardData || {}),
+      };
 
       this.signalKBaseUrl = getSignalKBaseUrl();
+      this.debugState.baseUrl = this.signalKBaseUrl;
+      this.debug(
+        "Fetch dashboard data: titleKey=%s metrics=%s baseUrl=%s",
+        screenDefinition.titleKey,
+        metricKeys.join(","),
+        this.signalKBaseUrl,
+      );
 
-      for (let index = 0; index < signalKSpeedUrls.length; index += 1) {
-        const speedUrl = signalKSpeedUrls[index];
+      await Promise.all(
+        metricKeys.map(async (metricKey) => {
+          try {
+            dashboardData[metricKey] = await this.fetchSignalKMetric(metricKey);
+          } catch (error) {
+            this.debug(
+              "Signal K metric fetch failed: %s (%s)",
+              metricKey,
+              getErrorMessage(error),
+            );
+            dashboardData[metricKey] = null;
+          }
+        }),
+      );
+
+      this.debug(
+        "Fetch dashboard result: %s",
+        metricKeys
+          .map(
+            (metricKey) =>
+              `${metricKey}=${formatMetricValueForLog(dashboardData[metricKey])}`,
+          )
+          .join(" "),
+      );
+
+      return dashboardData;
+    },
+    async fetchSignalKMetric(metricKey) {
+      let lastError = null;
+      const metricUrls = getSignalKMetricUrls(metricKey);
+
+      if (!metricUrls.length) {
+        throw new Error(`Signal K metric is not configured: ${metricKey}`);
+      }
+
+      for (let index = 0; index < metricUrls.length; index += 1) {
+        const metricUrl = metricUrls[index];
+        this.debugState.metricKey = metricKey;
+        this.debugState.status = "pending";
+        this.debugState.error = "-";
+        this.debugState.bodyPreview = truncateForDebug(metricUrl);
+        this.debug(
+          "HTTP request: metric=%s attempt=%s/%s url=%s",
+          metricKey,
+          String(index + 1),
+          String(metricUrls.length),
+          metricUrl,
+        );
 
         try {
           const response = await this.httpRequest({
-            url: speedUrl,
+            url: metricUrl,
             method: "GET",
           });
 
-          return extractSpeedValue(response);
+          this.debug(
+            "HTTP response: metric=%s status=%s body=%s",
+            metricKey,
+            String(response && response.status),
+            getResponseBodyPreview(response && response.body),
+          );
+          this.debugState.status = String(response && response.status);
+          this.debugState.bodyPreview = truncateForDebug(
+            getResponseBodyPreview(response && response.body),
+          );
+
+          return extractNumericValue(response);
         } catch (error) {
+          this.debugState.status = "request_failed";
+          this.debugState.error = truncateForDebug(getErrorMessage(error));
+          this.debug(
+            "HTTP request failed: metric=%s url=%s error=%s",
+            metricKey,
+            metricUrl,
+            getErrorMessage(error),
+          );
           lastError = error;
         }
       }
 
-      throw lastError || new Error("Signal K speed endpoint unavailable");
+      throw lastError || new Error(`Signal K metric unavailable: ${metricKey}`);
     },
-    applyDisplayState() {
-      if (!this.speedWidget || !this.unitWidget || !this.statusWidget) {
-        return;
+    hasAnyAvailableMetric(data) {
+      if (!data) {
+        return false;
       }
 
-      this.speedWidget.setProperty(hmUI.prop.TEXT, this.state.speedText);
-      this.unitWidget.setProperty(hmUI.prop.TEXT, this.state.unitText);
-      this.statusWidget.setProperty(hmUI.prop.TEXT, this.state.statusText);
-      this.statusWidget.setProperty(hmUI.prop.COLOR, this.state.statusColor);
+      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+      const metricKeys = screenDefinition.metricKeys || Object.keys(SIGNAL_K_METRIC_PATHS);
+
+      for (let index = 0; index < metricKeys.length; index += 1) {
+        if (isFiniteNumber(data[metricKeys[index]])) {
+          return true;
+        }
+      }
+
+      return false;
     },
-    showLoadingState() {
-      this.state.speedText = getText("placeholderSpeed");
-      this.state.unitText = getText("speedUnit");
-      this.state.statusText = getText("loadingState");
-      this.state.statusColor = STATUS_COLORS.loading;
-      this.applyDisplayState();
+    getRowsForCurrentScreen() {
+      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+
+      return screenDefinition.metrics.map((metricDefinition) => {
+        const metricValue = metricDefinition.resolveValue(this.dashboardData);
+
+        return {
+          label: metricDefinition.label,
+          valueText: metricDefinition.formatter(metricValue),
+          available: isFiniteNumber(metricValue),
+        };
+      });
     },
-    showErrorState() {
-      this.state.speedText = this.state.speedText || getText("placeholderSpeed");
-      this.state.unitText = getText("speedUnit");
-      this.state.statusText = getText("errorState");
-      this.state.statusColor = STATUS_COLORS.error;
-      this.debug(
-        "Signal K base URL in use: %s",
-        this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
+    getStatusDisplay(rows) {
+      if (this.dashboardState === "loading") {
+        return {
+          text: getText("loadingState"),
+          color: STATUS_COLORS.loading,
+        };
+      }
+
+      if (this.dashboardState === "error") {
+        return {
+          text: getText("errorState"),
+          color: STATUS_COLORS.error,
+        };
+      }
+
+      let availableRowCount = 0;
+
+      for (let index = 0; index < rows.length; index += 1) {
+        if (rows[index].available) {
+          availableRowCount += 1;
+        }
+      }
+
+      if (availableRowCount === rows.length) {
+        return {
+          text: getText("readyState"),
+          color: STATUS_COLORS.ready,
+        };
+      }
+
+      if (availableRowCount > 0 || this.hasAnyAvailableMetric(this.dashboardData)) {
+        return {
+          text: getText("partialState"),
+          color: STATUS_COLORS.partial,
+        };
+      }
+
+      return {
+        text: getText("errorState"),
+        color: STATUS_COLORS.error,
+      };
+    },
+    toggleAdmin() {
+      this.state.isAdminOpen = !this.state.isAdminOpen;
+      this.log(
+        "Admin toggled: isOpen=%s",
+        this.state.isAdminOpen ? "true" : "false",
       );
       this.applyDisplayState();
     },
-    showSpeedState(speedText) {
-      this.state.speedText = speedText;
-      this.state.unitText = getText("speedUnit");
-      this.state.statusText = getText("readyState");
-      this.state.statusColor = STATUS_COLORS.ready;
+    updateRefreshFrequency(refreshFrequencyKey) {
+      const normalizedKey = setRefreshFrequencyKey(refreshFrequencyKey);
+
+      if (normalizedKey === this.state.refreshFrequencyKey) {
+        return;
+      }
+
+      this.state.refreshFrequencyKey = normalizedKey;
+      this.pollIntervalMs = getRefreshIntervalMs(normalizedKey);
+      this.log(
+        "Refresh frequency updated: key=%s intervalMs=%s",
+        normalizedKey,
+        String(this.pollIntervalMs),
+      );
+      this.stopPolling();
+      this.startPolling();
+      hmUI.showToast({ text: getText("refreshFrequencyUpdated") });
+      this.applyDisplayState();
+    },
+    openSignalKUrlKeyboard() {
+      const currentUrl = getSignalKBaseUrl();
+      this.log("Open Signal K URL keyboard: currentUrl=%s", currentUrl);
+      hmUI.createKeyboard({
+        text: currentUrl,
+        onComplete: (_widget, result) => {
+          const nextUrl = (result && result.data) || currentUrl;
+          const normalizedUrl = nextUrl.trim() || currentUrl;
+          setSignalKBaseUrl(normalizedUrl);
+          this.signalKBaseUrl = getSignalKBaseUrl();
+          this.debugState.baseUrl = this.signalKBaseUrl;
+          this.debugState.status = "url_updated";
+          this.debugState.error = "-";
+          this.debugState.bodyPreview = "-";
+          this.log("Signal K URL updated: %s", this.signalKBaseUrl);
+          hmUI.showToast({ text: getText("signalKUrlUpdated") });
+          this.stopPolling();
+          this.startPolling();
+          this.applyDisplayState();
+        },
+        onCancel: () => {
+          this.log("Signal K URL edit canceled");
+        },
+      });
+    },
+    applyAdminState() {
+      this.titleWidget.setProperty(hmUI.prop.TEXT, getText("adminTitle"));
+      this.statusWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminUrlLabelWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminUrlButtonWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminUrlButtonWidget.setProperty(
+        hmUI.prop.TEXT,
+        truncateForDebug(getSignalKBaseUrl(), 30),
+      );
+      this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminDebugWidget.setProperty(
+        hmUI.prop.TEXT,
+        [
+          getText("adminDebugTitle"),
+          `scr: ${this.debugState.screenTitleKey}`,
+          `url: ${truncateForDebug(this.debugState.baseUrl, 34)}`,
+          `met: ${truncateForDebug(this.debugState.metricKey, 24)}`,
+          `sta: ${truncateForDebug(this.debugState.status, 24)}`,
+          `err: ${truncateForDebug(this.debugState.error, 34)}`,
+          `body: ${truncateForDebug(this.debugState.bodyPreview, 34)}`,
+        ].join("\n"),
+      );
+
+      for (let index = 0; index < MAX_ROWS; index += 1) {
+        this.metricLabelWidgets[index].setProperty(hmUI.prop.VISIBLE, false);
+        this.metricValueWidgets[index].setProperty(hmUI.prop.VISIBLE, false);
+      }
+
+      for (let index = 0; index < this.adminOptionButtons.length; index += 1) {
+        const option = REFRESH_FREQUENCY_OPTIONS[index];
+        const isSelected = option.key === this.state.refreshFrequencyKey;
+        const buttonWidget = this.adminOptionButtons[index];
+
+        buttonWidget.setProperty(hmUI.prop.VISIBLE, true);
+        buttonWidget.setProperty(
+          hmUI.prop.MORE,
+          isSelected ?
+            {
+              normal_color: ADMIN_SELECTED_BUTTON_COLOR,
+              press_color: ADMIN_SELECTED_BUTTON_COLOR,
+            }
+          : {
+              normal_color: ADMIN_DEFAULT_BUTTON_COLOR,
+              press_color: ADMIN_PRESSED_BUTTON_COLOR,
+            },
+        );
+      }
+    },
+    applyDisplayState() {
+      if (
+        !this.titleWidget ||
+        !this.settingsButtonWidget ||
+        !this.statusWidget ||
+        !this.pageIndicatorWidget ||
+        !this.metricLabelWidgets.length ||
+        !this.metricValueWidgets.length ||
+        !this.adminTitleWidget ||
+        !this.adminSubtitleWidget ||
+        !this.adminHintWidget
+      ) {
+        return;
+      }
+
+      if (this.state.isAdminOpen) {
+        this.applyAdminState();
+        return;
+      }
+
+      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+      const rows = this.getRowsForCurrentScreen();
+      const rowPositions =
+        rows.length === 2 ? TWO_ROW_Y_POSITIONS : THREE_ROW_Y_POSITIONS;
+      const statusDisplay = this.getStatusDisplay(rows);
+
+      this.titleWidget.setProperty(hmUI.prop.TEXT, getText(screenDefinition.titleKey));
+      this.statusWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminUrlLabelWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminUrlButtonWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.statusWidget.setProperty(hmUI.prop.TEXT, statusDisplay.text);
+      this.statusWidget.setProperty(hmUI.prop.COLOR, statusDisplay.color);
+      this.pageIndicatorWidget.setProperty(
+        hmUI.prop.TEXT,
+        formatPageIndicator(this.state.currentScreenIndex),
+      );
+
+      for (let index = 0; index < this.adminOptionButtons.length; index += 1) {
+        this.adminOptionButtons[index].setProperty(hmUI.prop.VISIBLE, false);
+      }
+
+      for (let index = 0; index < MAX_ROWS; index += 1) {
+        const labelWidget = this.metricLabelWidgets[index];
+        const valueWidget = this.metricValueWidgets[index];
+        const row = rows[index];
+        const isVisible = !!row;
+
+        labelWidget.setProperty(hmUI.prop.VISIBLE, isVisible);
+        valueWidget.setProperty(hmUI.prop.VISIBLE, isVisible);
+
+        if (!isVisible) {
+          continue;
+        }
+
+        labelWidget.setProperty(hmUI.prop.TEXT, row.label);
+        labelWidget.setProperty(hmUI.prop.Y, rowPositions[index]);
+        valueWidget.setProperty(hmUI.prop.TEXT, row.valueText);
+        valueWidget.setProperty(hmUI.prop.Y, rowPositions[index]);
+      }
+    },
+    showDashboardState(dashboardData) {
+      this.dashboardData = dashboardData;
+      this.dashboardState =
+        this.hasAnyAvailableMetric(dashboardData) ? "ready" : "error";
+      this.log(
+        "Dashboard state updated: state=%s screen=%s",
+        this.dashboardState,
+        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
+      );
+      this.applyDisplayState();
+    },
+    showErrorState() {
+      this.dashboardState = "error";
+      this.error(
+        "Dashboard error state: screen=%s baseUrl=%s",
+        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
+        this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
+      );
+      this.debugState.status = "dashboard_error";
       this.applyDisplayState();
     },
     onDestroy() {
       this.log("page onDestroy invoked");
       this.stopPolling();
       this.isRefreshing = false;
+      offGesture();
       this.titleWidget = null;
-      this.speedWidget = null;
-      this.unitWidget = null;
+      this.settingsButtonWidget = null;
       this.statusWidget = null;
+      this.pageIndicatorWidget = null;
+      this.adminTitleWidget = null;
+      this.adminSubtitleWidget = null;
+      this.adminUrlLabelWidget = null;
+      this.adminUrlButtonWidget = null;
+      this.adminHintWidget = null;
+      this.adminDebugWidget = null;
+      this.metricLabelWidgets = [];
+      this.metricValueWidgets = [];
+      this.adminOptionButtons = [];
     },
   }),
 );

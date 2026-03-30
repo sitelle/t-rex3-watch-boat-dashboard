@@ -4,6 +4,12 @@ msgstr "Boat Dashboard"
 msgid "speedTitle"
 msgstr "Boat speed"
 
+msgid "trueWindTitle"
+msgstr "True wind"
+
+msgid "apparentWindTitle"
+msgstr "Apparent wind"
+
 msgid "placeholderSpeed"
 msgstr "--.-"
 
@@ -16,5 +22,41 @@ msgstr "Loading..."
 msgid "errorState"
 msgstr "Signal K unavailable"
 
+msgid "partialState"
+msgstr "Partial data"
+
 msgid "readyState"
 msgstr "Live"
+
+msgid "adminTitle"
+msgstr "Admin"
+
+msgid "refreshFrequencyLabel"
+msgstr "Refresh frequency"
+
+msgid "refreshFrequencyFast"
+msgstr "Fast - 0.5 s"
+
+msgid "refreshFrequencyMedium"
+msgstr "Medium - 1 s"
+
+msgid "refreshFrequencySlow"
+msgstr "Slow - 2 s"
+
+msgid "adminHint"
+msgstr "Tap the gear to go back"
+
+msgid "refreshFrequencyUpdated"
+msgstr "Frequency updated"
+
+msgid "adminDebugTitle"
+msgstr "Diagnostics"
+
+msgid "signalKUrlLabel"
+msgstr "Signal K URL"
+
+msgid "editSignalKUrl"
+msgstr "Edit URL"
+
+msgid "signalKUrlUpdated"
+msgstr "Signal K URL updated"

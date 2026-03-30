@@ -4,6 +4,12 @@ msgstr "Boat Dashboard"
 msgid "speedTitle"
 msgstr "Vitesse bateau"
 
+msgid "trueWindTitle"
+msgstr "Vent reel"
+
+msgid "apparentWindTitle"
+msgstr "Vent apparent"
+
 msgid "placeholderSpeed"
 msgstr "--.-"
 
@@ -16,5 +22,41 @@ msgstr "Chargement..."
 msgid "errorState"
 msgstr "Signal K indisponible"
 
+msgid "partialState"
+msgstr "Donnees partielles"
+
 msgid "readyState"
 msgstr "En direct"
+
+msgid "adminTitle"
+msgstr "Admin"
+
+msgid "refreshFrequencyLabel"
+msgstr "Frequence de rafraichissement"
+
+msgid "refreshFrequencyFast"
+msgstr "Rapide - 0,5 s"
+
+msgid "refreshFrequencyMedium"
+msgstr "Moyen - 1 s"
+
+msgid "refreshFrequencySlow"
+msgstr "Lent - 2 s"
+
+msgid "adminHint"
+msgstr "Touchez la roue pour revenir"
+
+msgid "refreshFrequencyUpdated"
+msgstr "Frequence mise a jour"
+
+msgid "adminDebugTitle"
+msgstr "Diagnostic"
+
+msgid "signalKUrlLabel"
+msgstr "URL Signal K"
+
+msgid "editSignalKUrl"
+msgstr "Modifier l'URL"
+
+msgid "signalKUrlUpdated"
+msgstr "URL Signal K mise a jour"
