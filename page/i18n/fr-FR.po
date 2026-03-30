@@ -1,0 +1,20 @@
+msgid "appName"
+msgstr "Boat Dashboard"
+
+msgid "speedTitle"
+msgstr "Vitesse bateau"
+
+msgid "placeholderSpeed"
+msgstr "--.-"
+
+msgid "speedUnit"
+msgstr "kn"
+
+msgid "loadingState"
+msgstr "Chargement..."
+
+msgid "errorState"
+msgstr "Signal K indisponible"
+
+msgid "readyState"
+msgstr "En direct"
