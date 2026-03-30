@@ -28,6 +28,9 @@ msgstr "Donnees partielles"
 msgid "readyState"
 msgstr "En direct"
 
+msgid "bridgeErrorState"
+msgstr "Companion Zepp indisponible"
+
 msgid "adminTitle"
 msgstr "Admin"
 

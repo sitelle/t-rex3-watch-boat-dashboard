@@ -19,7 +19,7 @@ export const SCREEN_TITLE_STYLE = {
 };
 
 export const SETTINGS_BUTTON_STYLE = {
-  x: DEVICE_WIDTH - px(92),
+  x: (DEVICE_WIDTH - px(56)) / 2,
   y: px(66),
   w: px(56),
   h: px(56),
@@ -36,9 +36,9 @@ export const METRIC_LABEL_STYLE = {
   x: px(42),
   y: 0,
   w: px(104),
-  h: px(42),
+  h: px(48),
   color: 0xa9c1c7,
-  text_size: px(24),
+  text_size: px(28),
   align_h: hmUI.align.LEFT,
   align_v: hmUI.align.CENTER_V,
   text_style: hmUI.text_style.NONE,
@@ -49,15 +49,15 @@ export const METRIC_VALUE_STYLE = {
   x: px(156),
   y: 0,
   w: DEVICE_WIDTH - px(198),
-  h: px(52),
+  h: px(62),
   color: 0xffffff,
-  text_size: px(40),
+  text_size: px(50),
   align_h: hmUI.align.RIGHT,
   align_v: hmUI.align.CENTER_V,
   text_style: hmUI.text_style.NONE,
 };
 
-export const TWO_ROW_Y_POSITIONS = [px(178), px(266)];
+export const TWO_ROW_Y_POSITIONS = [px(168), px(286)];
 
 export const THREE_ROW_Y_POSITIONS = [px(150), px(226), px(302)];
 
@@ -85,6 +85,19 @@ export const PAGE_INDICATOR_STYLE = {
   align_h: hmUI.align.CENTER_H,
   align_v: hmUI.align.CENTER_V,
   text_style: hmUI.text_style.NONE,
+};
+
+export const SIGNAL_K_URL_DEBUG_STYLE = {
+  text: "",
+  x: px(28),
+  y: DEVICE_HEIGHT - px(198),
+  w: DEVICE_WIDTH - px(56),
+  h: px(86),
+  color: 0x8fa3a9,
+  text_size: px(14),
+  align_h: hmUI.align.LEFT,
+  align_v: hmUI.align.TOP,
+  text_style: hmUI.text_style.WRAP,
 };
 
 export const ADMIN_TITLE_STYLE = {

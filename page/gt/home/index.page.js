@@ -26,6 +26,7 @@ import {
   METRIC_LABEL_STYLE,
   METRIC_VALUE_STYLE,
   PAGE_INDICATOR_STYLE,
+  SIGNAL_K_URL_DEBUG_STYLE,
   SCREEN_TITLE_STYLE,
   SETTINGS_BUTTON_STYLE,
   STATUS_TEXT_STYLE,
@@ -50,6 +51,27 @@ const ADMIN_SELECTED_BUTTON_COLOR = 0x56d8ff;
 const ADMIN_DEFAULT_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.normal_color;
 const ADMIN_PRESSED_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.press_color;
 const RESPONSE_BODY_PREVIEW_LENGTH = 120;
+const TEXT_FALLBACKS = {
+  speedTitle: "Vitesse bateau",
+  trueWindTitle: "Vent reel",
+  apparentWindTitle: "Vent apparent",
+  speedUnit: "kn",
+  loadingState: "Chargement...",
+  errorState: "Signal K indisponible",
+  partialState: "Donnees partielles",
+  readyState: "En direct",
+  bridgeErrorState: "Companio Zepp indisponible",
+  adminTitle: "Admin",
+  refreshFrequencyLabel: "Frequence de rafraichissement",
+  refreshFrequencyFast: "Rapide - 0,5 s",
+  refreshFrequencyMedium: "Moyen - 1 s",
+  refreshFrequencySlow: "Lent - 2 s",
+  adminHint: "Touchez la roue pour revenir",
+  refreshFrequencyUpdated: "Frequence mise a jour",
+  adminDebugTitle: "Diagnostic",
+  signalKUrlLabel: "URL Signal K",
+  signalKUrlUpdated: "URL Signal K mise a jour",
+};
 
 const REFRESH_FREQUENCY_OPTIONS = [
   {
@@ -223,10 +245,10 @@ function toRoundedSignedDegrees(valueInRadians) {
 
 function formatSpeedValue(valueInMetersPerSecond) {
   if (!isFiniteNumber(valueInMetersPerSecond)) {
-    return `--.- ${getText("speedUnit")}`;
+    return `--.- ${t("speedUnit")}`;
   }
 
-  return `${(valueInMetersPerSecond * KNOTS_PER_MPS).toFixed(1)} ${getText(
+  return `${(valueInMetersPerSecond * KNOTS_PER_MPS).toFixed(1)} ${t(
     "speedUnit",
   )}`;
 }
@@ -292,12 +314,25 @@ function getRefreshIntervalMs(refreshFrequencyKey) {
   return getRefreshFrequencyConfig(refreshFrequencyKey).intervalMs;
 }
 
+function t(textKey) {
+  const translatedText = getText(textKey);
+  if (typeof translatedText === "string" && translatedText && translatedText !== textKey) {
+    return translatedText;
+  }
+
+  return TEXT_FALLBACKS[textKey] || textKey;
+}
+
 function getErrorMessage(error) {
   if (error && typeof error.message === "string") {
     return error.message;
   }
 
   return String(error);
+}
+
+function containsShakeTimeout(errorText) {
+  return String(errorText || "").toLowerCase().includes("shake timeout");
 }
 
 function getResponseBodyPreview(body) {
@@ -317,6 +352,52 @@ function getResponseBodyPreview(body) {
   return normalizedBody.slice(0, RESPONSE_BODY_PREVIEW_LENGTH);
 }
 
+async function normalizeRuntimeFetchResponse(response) {
+  if (!response || typeof response.status !== "number") {
+    throw new Error("Invalid fetch response");
+  }
+
+  if (typeof response.body === "string" || typeof response.body === "number") {
+    return {
+      status: response.status,
+      body: response.body,
+    };
+  }
+
+  if (response.body && typeof response.body === "object") {
+    return {
+      status: response.status,
+      body: JSON.stringify(response.body),
+    };
+  }
+
+  if (typeof response.text === "function") {
+    return {
+      status: response.status,
+      body: await response.text(),
+    };
+  }
+
+  return {
+    status: response.status,
+    body: "",
+  };
+}
+
+async function requestWithRuntimeFetch(url) {
+  if (typeof fetch !== "function") {
+    throw new Error("fetch_unavailable");
+  }
+
+  try {
+    const response = await fetch({ url, method: "GET" });
+    return normalizeRuntimeFetchResponse(response);
+  } catch (_firstError) {
+    const response = await fetch(url, { method: "GET" });
+    return normalizeRuntimeFetchResponse(response);
+  }
+}
+
 function formatMetricValueForLog(value) {
   if (!isFiniteNumber(value)) {
     return "null";
@@ -325,7 +406,7 @@ function formatMetricValueForLog(value) {
   return String(value);
 }
 
-function truncateForDebug(text, maxLength = 80) {
+function truncateForDebug(text, maxLength = 180) {
   if (typeof text !== "string") {
     return String(text);
   }
@@ -357,6 +438,8 @@ Page(
         metricKey: "-",
         status: "-",
         error: "-",
+        fetchError: "-",
+        sideError: "-",
         bodyPreview: "-",
       };
       this.state.refreshFrequencyKey = getRefreshFrequencyKey();
@@ -371,7 +454,10 @@ Page(
     build() {
       this.log("page build invoked");
 
-      this.titleWidget = hmUI.createWidget(hmUI.widget.TEXT, SCREEN_TITLE_STYLE);
+      this.titleWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...SCREEN_TITLE_STYLE,
+        visible: false,
+      });
       this.settingsButtonWidget = hmUI.createWidget(hmUI.widget.BUTTON, {
         ...SETTINGS_BUTTON_STYLE,
         click_func: () => {
@@ -411,6 +497,10 @@ Page(
         ...ADMIN_DEBUG_STYLE,
         visible: false,
       });
+      this.signalKUrlDebugWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...SIGNAL_K_URL_DEBUG_STYLE,
+        visible: false,
+      });
 
       for (let index = 0; index < MAX_ROWS; index += 1) {
         this.metricLabelWidgets.push(
@@ -427,7 +517,7 @@ Page(
           hmUI.createWidget(hmUI.widget.BUTTON, {
             ...ADMIN_OPTION_BUTTON_STYLE,
             y: ADMIN_OPTION_Y_POSITIONS[index],
-            text: getText(option.labelKey),
+            text: t(option.labelKey),
             visible: false,
             click_func: () => {
               this.updateRefreshFrequency(option.key);
@@ -587,6 +677,8 @@ Page(
         this.debugState.metricKey = metricKey;
         this.debugState.status = "pending";
         this.debugState.error = "-";
+        this.debugState.fetchError = "-";
+        this.debugState.sideError = "-";
         this.debugState.bodyPreview = truncateForDebug(metricUrl);
         this.debug(
           "HTTP request: metric=%s attempt=%s/%s url=%s",
@@ -597,14 +689,43 @@ Page(
         );
 
         try {
-          const response = await this.httpRequest({
-            url: metricUrl,
-            method: "GET",
-          });
+          let response = null;
+          let transport = "fetch";
+          let fetchError = null;
+          let sideError = null;
+
+          try {
+            response = await requestWithRuntimeFetch(metricUrl);
+          } catch (error) {
+            fetchError = error;
+            this.debugState.fetchError = truncateForDebug(getErrorMessage(error));
+            transport = "app_side";
+
+            try {
+              response = await this.httpRequest({
+                url: metricUrl,
+                method: "GET",
+              });
+            } catch (httpError) {
+              sideError = httpError;
+              this.debugState.sideError = truncateForDebug(
+                getErrorMessage(httpError),
+              );
+            }
+          }
+
+          if (!response) {
+            const fetchMessage = fetchError ? getErrorMessage(fetchError) : "n/a";
+            const sideMessage = sideError ? getErrorMessage(sideError) : "n/a";
+            throw new Error(
+              `fetch_failed=${fetchMessage}; app_side_failed=${sideMessage}`,
+            );
+          }
 
           this.debug(
-            "HTTP response: metric=%s status=%s body=%s",
+            "HTTP response: metric=%s via=%s status=%s body=%s",
             metricKey,
+            transport,
             String(response && response.status),
             getResponseBodyPreview(response && response.body),
           );
@@ -612,6 +733,14 @@ Page(
           this.debugState.bodyPreview = truncateForDebug(
             getResponseBodyPreview(response && response.body),
           );
+          if (fetchError) {
+            this.debug(
+              "Fetch transport failed before fallback: metric=%s url=%s error=%s",
+              metricKey,
+              metricUrl,
+              getErrorMessage(fetchError),
+            );
+          }
 
           return extractNumericValue(response);
         } catch (error) {
@@ -661,14 +790,18 @@ Page(
     getStatusDisplay(rows) {
       if (this.dashboardState === "loading") {
         return {
-          text: getText("loadingState"),
+          text: t("loadingState"),
           color: STATUS_COLORS.loading,
         };
       }
 
       if (this.dashboardState === "error") {
+        const hasCompanionBridgeError =
+          containsShakeTimeout(this.debugState.sideError) ||
+          containsShakeTimeout(this.debugState.error);
+
         return {
-          text: getText("errorState"),
+          text: hasCompanionBridgeError ? t("bridgeErrorState") : t("errorState"),
           color: STATUS_COLORS.error,
         };
       }
@@ -683,20 +816,20 @@ Page(
 
       if (availableRowCount === rows.length) {
         return {
-          text: getText("readyState"),
+          text: t("readyState"),
           color: STATUS_COLORS.ready,
         };
       }
 
       if (availableRowCount > 0 || this.hasAnyAvailableMetric(this.dashboardData)) {
         return {
-          text: getText("partialState"),
+          text: t("partialState"),
           color: STATUS_COLORS.partial,
         };
       }
 
       return {
-        text: getText("errorState"),
+        text: t("errorState"),
         color: STATUS_COLORS.error,
       };
     },
@@ -724,7 +857,7 @@ Page(
       );
       this.stopPolling();
       this.startPolling();
-      hmUI.showToast({ text: getText("refreshFrequencyUpdated") });
+      hmUI.showToast({ text: t("refreshFrequencyUpdated") });
       this.applyDisplayState();
     },
     openSignalKUrlKeyboard() {
@@ -740,9 +873,11 @@ Page(
           this.debugState.baseUrl = this.signalKBaseUrl;
           this.debugState.status = "url_updated";
           this.debugState.error = "-";
+          this.debugState.fetchError = "-";
+          this.debugState.sideError = "-";
           this.debugState.bodyPreview = "-";
           this.log("Signal K URL updated: %s", this.signalKBaseUrl);
-          hmUI.showToast({ text: getText("signalKUrlUpdated") });
+          hmUI.showToast({ text: t("signalKUrlUpdated") });
           this.stopPolling();
           this.startPolling();
           this.applyDisplayState();
@@ -753,31 +888,24 @@ Page(
       });
     },
     applyAdminState() {
-      this.titleWidget.setProperty(hmUI.prop.TEXT, getText("adminTitle"));
+      this.titleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.statusWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminUrlLabelWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminUrlButtonWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.adminTitleWidget.setProperty(hmUI.prop.TEXT, t("adminTitle"));
+      this.adminSubtitleWidget.setProperty(hmUI.prop.TEXT, t("refreshFrequencyLabel"));
+      this.adminUrlLabelWidget.setProperty(hmUI.prop.TEXT, t("signalKUrlLabel"));
+      this.adminHintWidget.setProperty(hmUI.prop.TEXT, t("adminHint"));
       this.adminUrlButtonWidget.setProperty(
         hmUI.prop.TEXT,
         truncateForDebug(getSignalKBaseUrl(), 30),
       );
       this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.adminDebugWidget.setProperty(
-        hmUI.prop.TEXT,
-        [
-          getText("adminDebugTitle"),
-          `scr: ${this.debugState.screenTitleKey}`,
-          `url: ${truncateForDebug(this.debugState.baseUrl, 34)}`,
-          `met: ${truncateForDebug(this.debugState.metricKey, 24)}`,
-          `sta: ${truncateForDebug(this.debugState.status, 24)}`,
-          `err: ${truncateForDebug(this.debugState.error, 34)}`,
-          `body: ${truncateForDebug(this.debugState.bodyPreview, 34)}`,
-        ].join("\n"),
-      );
+      this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.signalKUrlDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
 
       for (let index = 0; index < MAX_ROWS; index += 1) {
         this.metricLabelWidgets[index].setProperty(hmUI.prop.VISIBLE, false);
@@ -790,6 +918,7 @@ Page(
         const buttonWidget = this.adminOptionButtons[index];
 
         buttonWidget.setProperty(hmUI.prop.VISIBLE, true);
+        buttonWidget.setProperty(hmUI.prop.TEXT, t(option.labelKey));
         buttonWidget.setProperty(
           hmUI.prop.MORE,
           isSelected ?
@@ -824,13 +953,12 @@ Page(
         return;
       }
 
-      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
       const rows = this.getRowsForCurrentScreen();
       const rowPositions =
         rows.length === 2 ? TWO_ROW_Y_POSITIONS : THREE_ROW_Y_POSITIONS;
       const statusDisplay = this.getStatusDisplay(rows);
 
-      this.titleWidget.setProperty(hmUI.prop.TEXT, getText(screenDefinition.titleKey));
+      this.titleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.statusWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, false);
@@ -849,6 +977,8 @@ Page(
       for (let index = 0; index < this.adminOptionButtons.length; index += 1) {
         this.adminOptionButtons[index].setProperty(hmUI.prop.VISIBLE, false);
       }
+
+      this.signalKUrlDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
 
       for (let index = 0; index < MAX_ROWS; index += 1) {
         const labelWidget = this.metricLabelWidgets[index];
@@ -905,6 +1035,7 @@ Page(
       this.adminUrlButtonWidget = null;
       this.adminHintWidget = null;
       this.adminDebugWidget = null;
+      this.signalKUrlDebugWidget = null;
       this.metricLabelWidgets = [];
       this.metricValueWidgets = [];
       this.adminOptionButtons = [];
