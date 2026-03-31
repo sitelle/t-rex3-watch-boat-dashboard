@@ -398,14 +398,6 @@ async function requestWithRuntimeFetch(url) {
   }
 }
 
-function formatMetricValueForLog(value) {
-  if (!isFiniteNumber(value)) {
-    return "null";
-  }
-
-  return String(value);
-}
-
 function truncateForDebug(text, maxLength = 180) {
   if (typeof text !== "string") {
     return String(text);
@@ -423,7 +415,6 @@ Page(
       refreshFrequencyKey: "slow",
     },
     onInit() {
-      this.log("page onInit invoked");
       this.pollingTimer = null;
       this.isRefreshing = false;
       this.dashboardData = null;
@@ -444,16 +435,8 @@ Page(
       };
       this.state.refreshFrequencyKey = getRefreshFrequencyKey();
       this.pollIntervalMs = getRefreshIntervalMs(this.state.refreshFrequencyKey);
-      this.log(
-        "Signal K init: baseUrl=%s refreshFrequency=%s intervalMs=%s",
-        this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
-        this.state.refreshFrequencyKey,
-        String(this.pollIntervalMs),
-      );
     },
     build() {
-      this.log("page build invoked");
-
       this.titleWidget = hmUI.createWidget(hmUI.widget.TEXT, {
         ...SCREEN_TITLE_STYLE,
         visible: false,
@@ -562,11 +545,6 @@ Page(
 
       this.state.currentScreenIndex = nextScreenIndex;
       this.debugState.screenTitleKey = SCREEN_DEFINITIONS[nextScreenIndex].titleKey;
-      this.log(
-        "Screen changed: index=%s titleKey=%s",
-        String(nextScreenIndex),
-        SCREEN_DEFINITIONS[nextScreenIndex].titleKey,
-      );
       this.applyDisplayState();
       this.refreshDashboard();
     },
@@ -575,11 +553,6 @@ Page(
         return;
       }
 
-      this.log(
-        "Start polling: intervalMs=%s screen=%s",
-        String(this.pollIntervalMs),
-        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
-      );
       this.refreshDashboard();
       this.pollingTimer = setInterval(() => {
         this.refreshDashboard();
@@ -592,11 +565,9 @@ Page(
 
       clearInterval(this.pollingTimer);
       this.pollingTimer = null;
-      this.log("Stop polling");
     },
     async refreshDashboard() {
       if (this.isRefreshing) {
-        this.debug("Refresh skipped: previous refresh still running");
         return;
       }
 
@@ -604,21 +575,14 @@ Page(
       this.debugState.baseUrl = getSignalKBaseUrl();
       this.debugState.screenTitleKey =
         SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey;
-      this.debug(
-        "Refresh start: screen=%s baseUrl=%s",
-        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
-        getSignalKBaseUrl(),
-      );
 
       try {
         const dashboardData = await this.fetchDashboardData();
         this.showDashboardState(dashboardData);
       } catch (error) {
-        this.error("Refresh failed: %s", getErrorMessage(error));
         this.showErrorState();
       } finally {
         this.isRefreshing = false;
-        this.debug("Refresh end");
       }
     },
     async fetchDashboardData() {
@@ -630,36 +594,15 @@ Page(
 
       this.signalKBaseUrl = getSignalKBaseUrl();
       this.debugState.baseUrl = this.signalKBaseUrl;
-      this.debug(
-        "Fetch dashboard data: titleKey=%s metrics=%s baseUrl=%s",
-        screenDefinition.titleKey,
-        metricKeys.join(","),
-        this.signalKBaseUrl,
-      );
 
       await Promise.all(
         metricKeys.map(async (metricKey) => {
           try {
             dashboardData[metricKey] = await this.fetchSignalKMetric(metricKey);
           } catch (error) {
-            this.debug(
-              "Signal K metric fetch failed: %s (%s)",
-              metricKey,
-              getErrorMessage(error),
-            );
             dashboardData[metricKey] = null;
           }
         }),
-      );
-
-      this.debug(
-        "Fetch dashboard result: %s",
-        metricKeys
-          .map(
-            (metricKey) =>
-              `${metricKey}=${formatMetricValueForLog(dashboardData[metricKey])}`,
-          )
-          .join(" "),
       );
 
       return dashboardData;
@@ -680,13 +623,6 @@ Page(
         this.debugState.fetchError = "-";
         this.debugState.sideError = "-";
         this.debugState.bodyPreview = truncateForDebug(metricUrl);
-        this.debug(
-          "HTTP request: metric=%s attempt=%s/%s url=%s",
-          metricKey,
-          String(index + 1),
-          String(metricUrls.length),
-          metricUrl,
-        );
 
         try {
           let response = null;
@@ -722,36 +658,15 @@ Page(
             );
           }
 
-          this.debug(
-            "HTTP response: metric=%s via=%s status=%s body=%s",
-            metricKey,
-            transport,
-            String(response && response.status),
-            getResponseBodyPreview(response && response.body),
-          );
           this.debugState.status = String(response && response.status);
           this.debugState.bodyPreview = truncateForDebug(
             getResponseBodyPreview(response && response.body),
           );
-          if (fetchError) {
-            this.debug(
-              "Fetch transport failed before fallback: metric=%s url=%s error=%s",
-              metricKey,
-              metricUrl,
-              getErrorMessage(fetchError),
-            );
-          }
 
           return extractNumericValue(response);
         } catch (error) {
           this.debugState.status = "request_failed";
           this.debugState.error = truncateForDebug(getErrorMessage(error));
-          this.debug(
-            "HTTP request failed: metric=%s url=%s error=%s",
-            metricKey,
-            metricUrl,
-            getErrorMessage(error),
-          );
           lastError = error;
         }
       }
@@ -835,10 +750,6 @@ Page(
     },
     toggleAdmin() {
       this.state.isAdminOpen = !this.state.isAdminOpen;
-      this.log(
-        "Admin toggled: isOpen=%s",
-        this.state.isAdminOpen ? "true" : "false",
-      );
       this.applyDisplayState();
     },
     updateRefreshFrequency(refreshFrequencyKey) {
@@ -850,11 +761,6 @@ Page(
 
       this.state.refreshFrequencyKey = normalizedKey;
       this.pollIntervalMs = getRefreshIntervalMs(normalizedKey);
-      this.log(
-        "Refresh frequency updated: key=%s intervalMs=%s",
-        normalizedKey,
-        String(this.pollIntervalMs),
-      );
       this.stopPolling();
       this.startPolling();
       hmUI.showToast({ text: t("refreshFrequencyUpdated") });
@@ -862,7 +768,6 @@ Page(
     },
     openSignalKUrlKeyboard() {
       const currentUrl = getSignalKBaseUrl();
-      this.log("Open Signal K URL keyboard: currentUrl=%s", currentUrl);
       hmUI.createKeyboard({
         text: currentUrl,
         onComplete: (_widget, result) => {
@@ -876,14 +781,10 @@ Page(
           this.debugState.fetchError = "-";
           this.debugState.sideError = "-";
           this.debugState.bodyPreview = "-";
-          this.log("Signal K URL updated: %s", this.signalKBaseUrl);
           hmUI.showToast({ text: t("signalKUrlUpdated") });
           this.stopPolling();
           this.startPolling();
           this.applyDisplayState();
-        },
-        onCancel: () => {
-          this.log("Signal K URL edit canceled");
         },
       });
     },
@@ -1003,25 +904,14 @@ Page(
       this.dashboardData = dashboardData;
       this.dashboardState =
         this.hasAnyAvailableMetric(dashboardData) ? "ready" : "error";
-      this.log(
-        "Dashboard state updated: state=%s screen=%s",
-        this.dashboardState,
-        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
-      );
       this.applyDisplayState();
     },
     showErrorState() {
       this.dashboardState = "error";
-      this.error(
-        "Dashboard error state: screen=%s baseUrl=%s",
-        SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey,
-        this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
-      );
       this.debugState.status = "dashboard_error";
       this.applyDisplayState();
     },
     onDestroy() {
-      this.log("page onDestroy invoked");
       this.stopPolling();
       this.isRefreshing = false;
       offGesture();
