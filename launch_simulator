@@ -1,1 +1,5 @@
 cd /Applications/simulator.app/Contents/MacOS && sudo -s ./simulator
+
+
+signalk-server
+
