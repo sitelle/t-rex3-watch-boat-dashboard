@@ -55,9 +55,6 @@ msgstr "Frequence mise a jour"
 msgid "adminDebugTitle"
 msgstr "Diagnostic"
 
-msgid "signalKUrlLabel"
-msgstr "URL Signal K"
-
 msgid "editSignalKUrl"
 msgstr "Modifier l'URL"
 

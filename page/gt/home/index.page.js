@@ -10,9 +10,6 @@ import { BasePage } from "@zeppos/zml/base-page";
 import {
   DEFAULT_SIGNAL_K_BASE_URL,
   SIGNAL_K_METRIC_PATHS,
-  getSignalKBaseUrl,
-  getSignalKMetricUrls,
-  setSignalKBaseUrl,
 } from "../../../utils/signal-k.js";
 import {
   ADMIN_DEBUG_STYLE,
@@ -21,8 +18,6 @@ import {
   ADMIN_OPTION_Y_POSITIONS,
   ADMIN_SUBTITLE_STYLE,
   ADMIN_TITLE_STYLE,
-  ADMIN_URL_BUTTON_STYLE,
-  ADMIN_URL_LABEL_STYLE,
   METRIC_LABEL_STYLE,
   METRIC_VALUE_STYLE,
   PAGE_INDICATOR_STYLE,
@@ -51,6 +46,9 @@ const ADMIN_SELECTED_BUTTON_COLOR = 0x56d8ff;
 const ADMIN_DEFAULT_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.normal_color;
 const ADMIN_PRESSED_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.press_color;
 const RESPONSE_BODY_PREVIEW_LENGTH = 120;
+const SIGNAL_K_METRIC_REQUEST_METHOD = "signalk.metric";
+const SIGNAL_K_BASE_URL_METHOD = "signalk.base_url.get";
+const SIGNAL_K_REQUEST_TIMEOUT_MS = 12000;
 const TEXT_FALLBACKS = {
   speedTitle: "Vitesse bateau",
   trueWindTitle: "Vent reel",
@@ -69,8 +67,6 @@ const TEXT_FALLBACKS = {
   adminHint: "Touchez la roue pour revenir",
   refreshFrequencyUpdated: "Frequence mise a jour",
   adminDebugTitle: "Diagnostic",
-  signalKUrlLabel: "URL Signal K",
-  signalKUrlUpdated: "URL Signal K mise a jour",
 };
 
 const REFRESH_FREQUENCY_OPTIONS = [
@@ -157,58 +153,6 @@ const SCREEN_DEFINITIONS = [
 
 function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function parseResponseBody(body) {
-  if (typeof body === "number") {
-    return body;
-  }
-
-  if (typeof body !== "string") {
-    return body;
-  }
-
-  const trimmedBody = body.trim();
-  if (!trimmedBody) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(trimmedBody);
-  } catch (_error) {
-    const numericBody = Number(trimmedBody);
-    if (Number.isFinite(numericBody)) {
-      return numericBody;
-    }
-
-    return trimmedBody;
-  }
-}
-
-function extractNumericValue(response) {
-  if (!response || typeof response.status !== "number") {
-    throw new Error("Signal K empty response");
-  }
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Signal K HTTP ${response.status}`);
-  }
-
-  const payload = parseResponseBody(response.body);
-
-  if (isFiniteNumber(payload)) {
-    return payload;
-  }
-
-  if (
-    payload &&
-    typeof payload === "object" &&
-    isFiniteNumber(payload.value)
-  ) {
-    return payload.value;
-  }
-
-  throw new Error("Signal K payload is not numeric");
 }
 
 function normalizeDegrees(degrees) {
@@ -352,52 +296,6 @@ function getResponseBodyPreview(body) {
   return normalizedBody.slice(0, RESPONSE_BODY_PREVIEW_LENGTH);
 }
 
-async function normalizeRuntimeFetchResponse(response) {
-  if (!response || typeof response.status !== "number") {
-    throw new Error("Invalid fetch response");
-  }
-
-  if (typeof response.body === "string" || typeof response.body === "number") {
-    return {
-      status: response.status,
-      body: response.body,
-    };
-  }
-
-  if (response.body && typeof response.body === "object") {
-    return {
-      status: response.status,
-      body: JSON.stringify(response.body),
-    };
-  }
-
-  if (typeof response.text === "function") {
-    return {
-      status: response.status,
-      body: await response.text(),
-    };
-  }
-
-  return {
-    status: response.status,
-    body: "",
-  };
-}
-
-async function requestWithRuntimeFetch(url) {
-  if (typeof fetch !== "function") {
-    throw new Error("fetch_unavailable");
-  }
-
-  try {
-    const response = await fetch({ url, method: "GET" });
-    return normalizeRuntimeFetchResponse(response);
-  } catch (_firstError) {
-    const response = await fetch(url, { method: "GET" });
-    return normalizeRuntimeFetchResponse(response);
-  }
-}
-
 function truncateForDebug(text, maxLength = 180) {
   if (typeof text !== "string") {
     return String(text);
@@ -419,7 +317,7 @@ Page(
       this.isRefreshing = false;
       this.dashboardData = null;
       this.dashboardState = "loading";
-      this.signalKBaseUrl = getSignalKBaseUrl();
+      this.signalKBaseUrl = DEFAULT_SIGNAL_K_BASE_URL;
       this.metricLabelWidgets = [];
       this.metricValueWidgets = [];
       this.adminOptionButtons = [];
@@ -459,18 +357,6 @@ Page(
       this.adminSubtitleWidget = hmUI.createWidget(hmUI.widget.TEXT, {
         ...ADMIN_SUBTITLE_STYLE,
         visible: false,
-      });
-      this.adminUrlLabelWidget = hmUI.createWidget(hmUI.widget.TEXT, {
-        ...ADMIN_URL_LABEL_STYLE,
-        visible: false,
-      });
-      this.adminUrlButtonWidget = hmUI.createWidget(hmUI.widget.BUTTON, {
-        ...ADMIN_URL_BUTTON_STYLE,
-        text: truncateForDebug(this.signalKBaseUrl, 30),
-        visible: false,
-        click_func: () => {
-          this.openSignalKUrlKeyboard();
-        },
       });
       this.adminHintWidget = hmUI.createWidget(hmUI.widget.TEXT, {
         ...ADMIN_HINT_STYLE,
@@ -572,11 +458,12 @@ Page(
       }
 
       this.isRefreshing = true;
-      this.debugState.baseUrl = getSignalKBaseUrl();
+      this.debugState.baseUrl = this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL;
       this.debugState.screenTitleKey =
         SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey;
 
       try {
+        await this.refreshSignalKBaseUrl();
         const dashboardData = await this.fetchDashboardData();
         this.showDashboardState(dashboardData);
       } catch (error) {
@@ -585,15 +472,32 @@ Page(
         this.isRefreshing = false;
       }
     },
+    async refreshSignalKBaseUrl() {
+      try {
+        const response = await this.request(
+          {
+            method: SIGNAL_K_BASE_URL_METHOD,
+            params: {},
+          },
+          {
+            timeout: SIGNAL_K_REQUEST_TIMEOUT_MS,
+          },
+        );
+
+        if (response && typeof response.baseUrl === "string" && response.baseUrl) {
+          this.signalKBaseUrl = response.baseUrl;
+          this.debugState.baseUrl = response.baseUrl;
+        }
+      } catch (_error) {
+        // Keep the last known URL for display when companion bridge is unavailable.
+      }
+    },
     async fetchDashboardData() {
       const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
       const metricKeys = screenDefinition.metricKeys || [];
       const dashboardData = {
         ...(this.dashboardData || {}),
       };
-
-      this.signalKBaseUrl = getSignalKBaseUrl();
-      this.debugState.baseUrl = this.signalKBaseUrl;
 
       await Promise.all(
         metricKeys.map(async (metricKey) => {
@@ -608,70 +512,51 @@ Page(
       return dashboardData;
     },
     async fetchSignalKMetric(metricKey) {
-      let lastError = null;
-      const metricUrls = getSignalKMetricUrls(metricKey);
-
-      if (!metricUrls.length) {
+      if (!SIGNAL_K_METRIC_PATHS[metricKey]) {
         throw new Error(`Signal K metric is not configured: ${metricKey}`);
       }
 
-      for (let index = 0; index < metricUrls.length; index += 1) {
-        const metricUrl = metricUrls[index];
-        this.debugState.metricKey = metricKey;
-        this.debugState.status = "pending";
-        this.debugState.error = "-";
-        this.debugState.fetchError = "-";
-        this.debugState.sideError = "-";
-        this.debugState.bodyPreview = truncateForDebug(metricUrl);
+      this.debugState.metricKey = metricKey;
+      this.debugState.status = "pending";
+      this.debugState.error = "-";
+      this.debugState.fetchError = "disabled";
+      this.debugState.sideError = "-";
+      this.debugState.bodyPreview = "requesting app-side";
 
-        try {
-          let response = null;
-          let transport = "fetch";
-          let fetchError = null;
-          let sideError = null;
+      try {
+        const response = await this.request(
+          {
+            method: SIGNAL_K_METRIC_REQUEST_METHOD,
+            params: {
+              metricKey,
+            },
+          },
+          {
+            timeout: SIGNAL_K_REQUEST_TIMEOUT_MS,
+          },
+        );
 
-          try {
-            response = await requestWithRuntimeFetch(metricUrl);
-          } catch (error) {
-            fetchError = error;
-            this.debugState.fetchError = truncateForDebug(getErrorMessage(error));
-            transport = "app_side";
+        this.debugState.status = String(response && response.status);
+        this.debugState.bodyPreview = truncateForDebug(
+          getResponseBodyPreview(response && response.value),
+        );
 
-            try {
-              response = await this.httpRequest({
-                url: metricUrl,
-                method: "GET",
-              });
-            } catch (httpError) {
-              sideError = httpError;
-              this.debugState.sideError = truncateForDebug(
-                getErrorMessage(httpError),
-              );
-            }
-          }
-
-          if (!response) {
-            const fetchMessage = fetchError ? getErrorMessage(fetchError) : "n/a";
-            const sideMessage = sideError ? getErrorMessage(sideError) : "n/a";
-            throw new Error(
-              `fetch_failed=${fetchMessage}; app_side_failed=${sideMessage}`,
-            );
-          }
-
-          this.debugState.status = String(response && response.status);
-          this.debugState.bodyPreview = truncateForDebug(
-            getResponseBodyPreview(response && response.body),
-          );
-
-          return extractNumericValue(response);
-        } catch (error) {
-          this.debugState.status = "request_failed";
-          this.debugState.error = truncateForDebug(getErrorMessage(error));
-          lastError = error;
+        if (response && typeof response.baseUrl === "string" && response.baseUrl) {
+          this.signalKBaseUrl = response.baseUrl;
+          this.debugState.baseUrl = response.baseUrl;
         }
-      }
 
-      throw lastError || new Error(`Signal K metric unavailable: ${metricKey}`);
+        if (!response || !isFiniteNumber(response.value)) {
+          throw new Error("Signal K payload is not numeric");
+        }
+
+        return response.value;
+      } catch (error) {
+        this.debugState.status = "request_failed";
+        this.debugState.error = truncateForDebug(getErrorMessage(error));
+        this.debugState.sideError = truncateForDebug(getErrorMessage(error));
+        throw error;
+      }
     },
     hasAnyAvailableMetric(data) {
       if (!data) {
@@ -766,44 +651,15 @@ Page(
       hmUI.showToast({ text: t("refreshFrequencyUpdated") });
       this.applyDisplayState();
     },
-    openSignalKUrlKeyboard() {
-      const currentUrl = getSignalKBaseUrl();
-      hmUI.createKeyboard({
-        text: currentUrl,
-        onComplete: (_widget, result) => {
-          const nextUrl = (result && result.data) || currentUrl;
-          const normalizedUrl = nextUrl.trim() || currentUrl;
-          setSignalKBaseUrl(normalizedUrl);
-          this.signalKBaseUrl = getSignalKBaseUrl();
-          this.debugState.baseUrl = this.signalKBaseUrl;
-          this.debugState.status = "url_updated";
-          this.debugState.error = "-";
-          this.debugState.fetchError = "-";
-          this.debugState.sideError = "-";
-          this.debugState.bodyPreview = "-";
-          hmUI.showToast({ text: t("signalKUrlUpdated") });
-          this.stopPolling();
-          this.startPolling();
-          this.applyDisplayState();
-        },
-      });
-    },
     applyAdminState() {
       this.titleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.statusWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.adminUrlLabelWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.adminUrlButtonWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminTitleWidget.setProperty(hmUI.prop.TEXT, t("adminTitle"));
       this.adminSubtitleWidget.setProperty(hmUI.prop.TEXT, t("refreshFrequencyLabel"));
-      this.adminUrlLabelWidget.setProperty(hmUI.prop.TEXT, t("signalKUrlLabel"));
       this.adminHintWidget.setProperty(hmUI.prop.TEXT, t("adminHint"));
-      this.adminUrlButtonWidget.setProperty(
-        hmUI.prop.TEXT,
-        truncateForDebug(getSignalKBaseUrl(), 30),
-      );
       this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.signalKUrlDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
@@ -864,8 +720,6 @@ Page(
       this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, true);
       this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, false);
-      this.adminUrlLabelWidget.setProperty(hmUI.prop.VISIBLE, false);
-      this.adminUrlButtonWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.statusWidget.setProperty(hmUI.prop.TEXT, statusDisplay.text);
@@ -921,8 +775,6 @@ Page(
       this.pageIndicatorWidget = null;
       this.adminTitleWidget = null;
       this.adminSubtitleWidget = null;
-      this.adminUrlLabelWidget = null;
-      this.adminUrlButtonWidget = null;
       this.adminHintWidget = null;
       this.adminDebugWidget = null;
       this.signalKUrlDebugWidget = null;

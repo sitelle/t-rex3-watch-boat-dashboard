@@ -29,12 +29,41 @@ zeus build    # build de production (sortie dist/)
 zeus bridge   # bridge debug vers app/simulateur
 ```
 
+pour déployer l'application sur le simulateur 
+
+1/ Lancer le simulateur en mode Root
+```bash
+cd /Applications/simulator.app/Contents/MacOS && sudo -s ./simulator
+```
+
+Depuis l'interface du simulateur, cliquer sur Emulator pour ouvrir le device et sur Bridge pour activer le bridge 
+
+2/ Lancer le serveur Signal K (pas nécessairement en mode root)
+```bash
+./signalk-server
+```
+
+3/ Activer le replay des trames NMEA depuis OpenCPN
+
+4/ depuis un terminal dans le folder du projet, lancer 
+```bash
+zeus bridge
+```
+
+puis une fois l'invite de commande : 
+```bash
+connect
+install 
+```
+
+
 ## Structure du projet
 
 ```text
 zepp-application/
 ├── app.js
 ├── app-side/index.js
+├── setting/index.js
 ├── app.json
 ├── assets/
 ├── docs/architecture.md
@@ -53,7 +82,8 @@ zepp-application/
 
 1. Le fichier `utils/config.js` definit l'URL Signal K par defaut via `SIGNALK.BASE_URL`.
 2. Le fichier `app.json` definit la configuration applicative, les cibles et les permissions.
-3. Le panneau `Admin` permet de modifier la frequence de rafraichissement et l'URL Signal K depuis la montre.
+3. Le panneau `Admin` sur la montre permet de modifier la frequence de rafraichissement.
+4. L'URL Signal K se configure dans la page `Settings` de l'application dans Zepp Mobile.
 
 ## Ressources
 
