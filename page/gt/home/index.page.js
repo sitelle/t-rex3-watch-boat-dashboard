@@ -1,5 +1,6 @@
 import * as hmUI from "@zos/ui";
 import { getText } from "@zos/i18n";
+import { resetPageBrightTime, setPageBrightTime } from "@zos/display";
 import {
   GESTURE_LEFT,
   GESTURE_RIGHT,
@@ -27,12 +28,20 @@ import {
   STATUS_TEXT_STYLE,
   THREE_ROW_Y_POSITIONS,
   TWO_ROW_Y_POSITIONS,
+  WEATHER_COUNTDOWN_LABEL_STYLE,
+  WEATHER_COUNTDOWN_VALUE_STYLE,
+  WEATHER_NEXT_STYLE,
+  WEATHER_PEAKS_STYLE,
 } from "zosLoader:./index.page.[pf].layout.js";
 import {
   getRefreshFrequencyConfig,
   getRefreshFrequencyKey,
   setRefreshFrequencyKey,
 } from "../../../utils/settings.js";
+import {
+  getWeatherNavigationDisplay,
+  hasWeatherSlots,
+} from "../../../utils/weather-models.js";
 const KNOTS_PER_MPS = 1.9438444924406;
 const DEGREES_PER_RADIAN = 180 / Math.PI;
 const MAX_ROWS = 3;
@@ -48,11 +57,17 @@ const ADMIN_PRESSED_BUTTON_COLOR = ADMIN_OPTION_BUTTON_STYLE.press_color;
 const RESPONSE_BODY_PREVIEW_LENGTH = 120;
 const SIGNAL_K_METRIC_REQUEST_METHOD = "signalk.metric";
 const SIGNAL_K_BASE_URL_METHOD = "signalk.base_url.get";
+const TIMEZONE_OFFSET_METHOD = "timezone.offset.get";
 const SIGNAL_K_REQUEST_TIMEOUT_MS = 12000;
+const TIMEZONE_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const PAGE_BRIGHT_TIME_MS = 300000;
+const PAGE_BRIGHT_REFRESH_INTERVAL_MS = 60000;
+const WEATHER_SCREEN_MODE = "weather_schedule";
 const TEXT_FALLBACKS = {
   speedTitle: "Vitesse bateau",
   trueWindTitle: "Vent reel",
   apparentWindTitle: "Vent apparent",
+  weatherScheduleTitle: "Modeles meteo",
   speedUnit: "kn",
   loadingState: "Chargement...",
   errorState: "Signal K indisponible",
@@ -148,6 +163,12 @@ const SCREEN_DEFINITIONS = [
         formatter: formatSpeedValue,
       },
     ],
+  },
+  {
+    titleKey: "weatherScheduleTitle",
+    mode: WEATHER_SCREEN_MODE,
+    metricKeys: [],
+    metrics: [],
   },
 ];
 
@@ -258,6 +279,14 @@ function getRefreshIntervalMs(refreshFrequencyKey) {
   return getRefreshFrequencyConfig(refreshFrequencyKey).intervalMs;
 }
 
+function isWeatherScreenDefinition(screenDefinition) {
+  return !!(
+    screenDefinition &&
+    typeof screenDefinition === "object" &&
+    screenDefinition.mode === WEATHER_SCREEN_MODE
+  );
+}
+
 function t(textKey) {
   const translatedText = getText(textKey);
   if (typeof translatedText === "string" && translatedText && translatedText !== textKey) {
@@ -313,6 +342,10 @@ Page(
       refreshFrequencyKey: "slow",
     },
     onInit() {
+      setPageBrightTime({ brightTime: PAGE_BRIGHT_TIME_MS });
+      this.pageBrightTimer = setInterval(() => {
+        setPageBrightTime({ brightTime: PAGE_BRIGHT_TIME_MS });
+      }, PAGE_BRIGHT_REFRESH_INTERVAL_MS);
       this.pollingTimer = null;
       this.isRefreshing = false;
       this.dashboardData = null;
@@ -320,6 +353,9 @@ Page(
       this.signalKBaseUrl = DEFAULT_SIGNAL_K_BASE_URL;
       this.metricLabelWidgets = [];
       this.metricValueWidgets = [];
+      this.weatherScheduleDisplay = null;
+      this.weatherTimezoneOffsetMinutes = null;
+      this.weatherTimezoneLastUpdatedAtMs = 0;
       this.adminOptionButtons = [];
       this.debugState = {
         baseUrl: this.signalKBaseUrl || DEFAULT_SIGNAL_K_BASE_URL,
@@ -370,6 +406,22 @@ Page(
         ...SIGNAL_K_URL_DEBUG_STYLE,
         visible: false,
       });
+      this.weatherCountdownLabelWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...WEATHER_COUNTDOWN_LABEL_STYLE,
+        visible: false,
+      });
+      this.weatherCountdownValueWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...WEATHER_COUNTDOWN_VALUE_STYLE,
+        visible: false,
+      });
+      this.weatherNextWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...WEATHER_NEXT_STYLE,
+        visible: false,
+      });
+      this.weatherPeaksWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+        ...WEATHER_PEAKS_STYLE,
+        visible: false,
+      });
 
       for (let index = 0; index < MAX_ROWS; index += 1) {
         this.metricLabelWidgets.push(
@@ -415,6 +467,10 @@ Page(
           return false;
         },
       });
+    },
+    isWeatherScheduleScreen() {
+      const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+      return isWeatherScreenDefinition(screenDefinition);
     },
     goToScreen(offset) {
       if (this.state.isAdminOpen) {
@@ -463,6 +519,12 @@ Page(
         SCREEN_DEFINITIONS[this.state.currentScreenIndex].titleKey;
 
       try {
+        if (this.isWeatherScheduleScreen()) {
+          await this.refreshWeatherTimezoneOffset();
+          this.applyDisplayState();
+          return;
+        }
+
         await this.refreshSignalKBaseUrl();
         const dashboardData = await this.fetchDashboardData();
         this.showDashboardState(dashboardData);
@@ -490,6 +552,38 @@ Page(
         }
       } catch (_error) {
         // Keep the last known URL for display when companion bridge is unavailable.
+      }
+    },
+    async refreshWeatherTimezoneOffset(force = false) {
+      const nowMs = Date.now();
+      if (
+        !force &&
+        nowMs - this.weatherTimezoneLastUpdatedAtMs < TIMEZONE_SYNC_MIN_INTERVAL_MS
+      ) {
+        return;
+      }
+
+      try {
+        const response = await this.request(
+          {
+            method: TIMEZONE_OFFSET_METHOD,
+            params: {},
+          },
+          {
+            timeout: SIGNAL_K_REQUEST_TIMEOUT_MS,
+          },
+        );
+
+        if (
+          response &&
+          typeof response.offsetMinutes === "number" &&
+          Number.isFinite(response.offsetMinutes)
+        ) {
+          this.weatherTimezoneOffsetMinutes = Math.round(response.offsetMinutes);
+          this.weatherTimezoneLastUpdatedAtMs = nowMs;
+        }
+      } catch (_error) {
+        // Weather screen can still fallback to device-side timezone computation.
       }
     },
     async fetchDashboardData() {
@@ -559,6 +653,10 @@ Page(
       }
     },
     hasAnyAvailableMetric(data) {
+      if (this.isWeatherScheduleScreen()) {
+        return hasWeatherSlots();
+      }
+
       if (!data) {
         return false;
       }
@@ -576,6 +674,27 @@ Page(
     },
     getRowsForCurrentScreen() {
       const screenDefinition = SCREEN_DEFINITIONS[this.state.currentScreenIndex];
+
+      if (isWeatherScreenDefinition(screenDefinition)) {
+        try {
+          this.weatherScheduleDisplay = getWeatherNavigationDisplay(
+            new Date(),
+            this.weatherTimezoneOffsetMinutes,
+          );
+        } catch (_error) {
+          this.weatherScheduleDisplay = {
+            rows: [],
+            countdownLabel: "Prochaine dispo dans",
+            countdownValue: "--",
+            nextSlotText: "Planning meteo en preparation",
+            secondaryText: "Planning meteo en preparation",
+            peaksText: "Pics en preparation",
+          };
+        }
+        return this.weatherScheduleDisplay.rows;
+      }
+
+      this.weatherScheduleDisplay = null;
 
       return screenDefinition.metrics.map((metricDefinition) => {
         const metricValue = metricDefinition.resolveValue(this.dashboardData);
@@ -640,24 +759,31 @@ Page(
     updateRefreshFrequency(refreshFrequencyKey) {
       const normalizedKey = setRefreshFrequencyKey(refreshFrequencyKey);
 
-      if (normalizedKey === this.state.refreshFrequencyKey) {
+      if (normalizedKey !== this.state.refreshFrequencyKey) {
+        this.state.refreshFrequencyKey = normalizedKey;
+        this.pollIntervalMs = getRefreshIntervalMs(normalizedKey);
+        this.stopPolling();
+        this.startPolling();
+        hmUI.showToast({ text: t("refreshFrequencyUpdated") });
+      }
+
+      if (!this.state.isAdminOpen) {
         return;
       }
 
-      this.state.refreshFrequencyKey = normalizedKey;
-      this.pollIntervalMs = getRefreshIntervalMs(normalizedKey);
-      this.stopPolling();
-      this.startPolling();
-      hmUI.showToast({ text: t("refreshFrequencyUpdated") });
+      this.state.isAdminOpen = false;
       this.applyDisplayState();
     },
     applyAdminState() {
       this.titleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.statusWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, false);
-      this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.weatherCountdownLabelWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.weatherCountdownValueWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.weatherNextWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.weatherPeaksWidget.setProperty(hmUI.prop.VISIBLE, false);
+      this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.adminTitleWidget.setProperty(hmUI.prop.TEXT, t("adminTitle"));
       this.adminSubtitleWidget.setProperty(hmUI.prop.TEXT, t("refreshFrequencyLabel"));
       this.adminHintWidget.setProperty(hmUI.prop.TEXT, t("adminHint"));
       this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, true);
@@ -696,6 +822,10 @@ Page(
         !this.settingsButtonWidget ||
         !this.statusWidget ||
         !this.pageIndicatorWidget ||
+        !this.weatherCountdownLabelWidget ||
+        !this.weatherCountdownValueWidget ||
+        !this.weatherNextWidget ||
+        !this.weatherPeaksWidget ||
         !this.metricLabelWidgets.length ||
         !this.metricValueWidgets.length ||
         !this.adminTitleWidget ||
@@ -710,24 +840,53 @@ Page(
         return;
       }
 
+      const isWeatherScreen = this.isWeatherScheduleScreen();
       const rows = this.getRowsForCurrentScreen();
+      const weatherDisplay =
+        isWeatherScreen ?
+          this.weatherScheduleDisplay ||
+            getWeatherNavigationDisplay(
+              new Date(),
+              this.weatherTimezoneOffsetMinutes,
+            )
+        : null;
       const rowPositions =
         rows.length === 2 ? TWO_ROW_Y_POSITIONS : THREE_ROW_Y_POSITIONS;
-      const statusDisplay = this.getStatusDisplay(rows);
+      const statusDisplay = !isWeatherScreen ? this.getStatusDisplay(rows) : null;
 
       this.titleWidget.setProperty(hmUI.prop.VISIBLE, false);
-      this.statusWidget.setProperty(hmUI.prop.VISIBLE, true);
-      this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, true);
+      this.statusWidget.setProperty(hmUI.prop.VISIBLE, !isWeatherScreen);
+      this.pageIndicatorWidget.setProperty(hmUI.prop.VISIBLE, !isWeatherScreen);
+      this.weatherCountdownLabelWidget.setProperty(hmUI.prop.VISIBLE, isWeatherScreen);
+      this.weatherCountdownValueWidget.setProperty(hmUI.prop.VISIBLE, isWeatherScreen);
+      this.weatherNextWidget.setProperty(hmUI.prop.VISIBLE, isWeatherScreen);
+      this.weatherPeaksWidget.setProperty(hmUI.prop.VISIBLE, isWeatherScreen);
       this.adminTitleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminSubtitleWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminHintWidget.setProperty(hmUI.prop.VISIBLE, false);
       this.adminDebugWidget.setProperty(hmUI.prop.VISIBLE, false);
-      this.statusWidget.setProperty(hmUI.prop.TEXT, statusDisplay.text);
-      this.statusWidget.setProperty(hmUI.prop.COLOR, statusDisplay.color);
-      this.pageIndicatorWidget.setProperty(
-        hmUI.prop.TEXT,
-        formatPageIndicator(this.state.currentScreenIndex),
-      );
+      this.pageIndicatorWidget.setProperty(hmUI.prop.TEXT, formatPageIndicator(this.state.currentScreenIndex));
+
+      if (isWeatherScreen) {
+        this.weatherCountdownLabelWidget.setProperty(
+          hmUI.prop.TEXT,
+          weatherDisplay.countdownLabel || "Prochaine dispo dans",
+        );
+        this.weatherCountdownValueWidget.setProperty(
+          hmUI.prop.TEXT,
+          weatherDisplay.countdownValue || "--",
+        );
+        this.weatherNextWidget.setProperty(
+          hmUI.prop.TEXT,
+          weatherDisplay.nextSlotText || weatherDisplay.secondaryText || "",
+        );
+        this.weatherPeaksWidget.setProperty(hmUI.prop.TEXT, weatherDisplay.peaksText);
+      } else {
+        this.weatherCountdownLabelWidget.setProperty(hmUI.prop.TEXT, "");
+        this.weatherCountdownValueWidget.setProperty(hmUI.prop.TEXT, "");
+        this.statusWidget.setProperty(hmUI.prop.TEXT, statusDisplay.text);
+        this.statusWidget.setProperty(hmUI.prop.COLOR, statusDisplay.color);
+      }
 
       for (let index = 0; index < this.adminOptionButtons.length; index += 1) {
         this.adminOptionButtons[index].setProperty(hmUI.prop.VISIBLE, false);
@@ -766,6 +925,11 @@ Page(
       this.applyDisplayState();
     },
     onDestroy() {
+      resetPageBrightTime();
+      if (this.pageBrightTimer) {
+        clearInterval(this.pageBrightTimer);
+        this.pageBrightTimer = null;
+      }
       this.stopPolling();
       this.isRefreshing = false;
       offGesture();
@@ -773,6 +937,10 @@ Page(
       this.settingsButtonWidget = null;
       this.statusWidget = null;
       this.pageIndicatorWidget = null;
+      this.weatherCountdownLabelWidget = null;
+      this.weatherCountdownValueWidget = null;
+      this.weatherNextWidget = null;
+      this.weatherPeaksWidget = null;
       this.adminTitleWidget = null;
       this.adminSubtitleWidget = null;
       this.adminHintWidget = null;
@@ -780,6 +948,9 @@ Page(
       this.signalKUrlDebugWidget = null;
       this.metricLabelWidgets = [];
       this.metricValueWidgets = [];
+      this.weatherScheduleDisplay = null;
+      this.weatherTimezoneOffsetMinutes = null;
+      this.weatherTimezoneLastUpdatedAtMs = 0;
       this.adminOptionButtons = [];
     },
   }),

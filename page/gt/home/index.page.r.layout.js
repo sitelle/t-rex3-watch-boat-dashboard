@@ -87,6 +87,58 @@ export const PAGE_INDICATOR_STYLE = {
   text_style: hmUI.text_style.NONE,
 };
 
+export const WEATHER_COUNTDOWN_LABEL_STYLE = {
+  text: "",
+  x: px(44),
+  y: px(132),
+  w: DEVICE_WIDTH - px(88),
+  h: px(28),
+  color: 0xa9c1c7,
+  text_size: px(18),
+  align_h: hmUI.align.CENTER_H,
+  align_v: hmUI.align.CENTER_V,
+  text_style: hmUI.text_style.NONE,
+};
+
+export const WEATHER_COUNTDOWN_VALUE_STYLE = {
+  text: "",
+  x: px(44),
+  y: px(156),
+  w: DEVICE_WIDTH - px(88),
+  h: px(72),
+  color: 0xffffff,
+  text_size: px(62),
+  align_h: hmUI.align.CENTER_H,
+  align_v: hmUI.align.CENTER_V,
+  text_style: hmUI.text_style.NONE,
+};
+
+export const WEATHER_NEXT_STYLE = {
+  text: "",
+  x: px(44),
+  y: px(244),
+  w: DEVICE_WIDTH - px(88),
+  h: px(74),
+  color: 0x56d8ff,
+  text_size: px(18),
+  align_h: hmUI.align.CENTER_H,
+  align_v: hmUI.align.TOP,
+  text_style: hmUI.text_style.WRAP,
+};
+
+export const WEATHER_PEAKS_STYLE = {
+  text: "",
+  x: px(34),
+  y: px(324),
+  w: DEVICE_WIDTH - px(68),
+  h: px(118),
+  color: 0xf5b642,
+  text_size: px(15),
+  align_h: hmUI.align.CENTER_H,
+  align_v: hmUI.align.TOP,
+  text_style: hmUI.text_style.WRAP,
+};
+
 export const SIGNAL_K_URL_DEBUG_STYLE = {
   text: "",
   x: px(28),

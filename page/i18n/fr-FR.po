@@ -10,6 +10,9 @@ msgstr "Vent reel"
 msgid "apparentWindTitle"
 msgstr "Vent apparent"
 
+msgid "weatherScheduleTitle"
+msgstr "Modeles meteo"
+
 msgid "placeholderSpeed"
 msgstr "--.-"
 

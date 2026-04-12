@@ -27,6 +27,8 @@ zepp-application/
 ├── app.js                               # Entree application
 ├── app-side/index.js                    # Service app-side
 ├── app.json                             # Manifest Zepp
+├── assets/
+│   └── raw/modeles_meteo.json           # Donnees metier statiques embarquees
 ├── page/
 │   ├── gt/home/index.page.js            # Logique UI et metier
 │   ├── gt/home/index.page.r.layout.js   # Styles ecran rond
@@ -35,7 +37,8 @@ zepp-application/
 └── utils/
     ├── config.js                        # Configuration initiale URL
     ├── signal-k.js                      # URLs metriques et normalisation
-    └── settings.js                      # Reglages frequence en localStorage
+    ├── settings.js                      # Reglages frequence en localStorage
+    └── weather-models.js                # Horaires modeles meteo (UTC -> local)
 ```
 
 ## 4. Architecture de haut niveau

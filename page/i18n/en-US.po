@@ -10,6 +10,9 @@ msgstr "True wind"
 msgid "apparentWindTitle"
 msgstr "Apparent wind"
 
+msgid "weatherScheduleTitle"
+msgstr "Weather models"
+
 msgid "placeholderSpeed"
 msgstr "--.-"
 

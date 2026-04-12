@@ -4,6 +4,7 @@ import { SIGNALK } from "../utils/config.js";
 const SIGNAL_K_BASE_URL_KEY = "signal_k_base_url";
 const SIGNAL_K_METRIC_METHOD = "signalk.metric";
 const SIGNAL_K_BASE_URL_METHOD = "signalk.base_url.get";
+const TIMEZONE_OFFSET_METHOD = "timezone.offset.get";
 const SIGNAL_K_HTTP_TIMEOUT_MS = 10000;
 const STATIC_SIGNAL_K_BASE_URL_FALLBACK = "http://192.168.1.82:3000";
 const DEFAULT_SIGNAL_K_BASE_URL =
@@ -140,6 +141,11 @@ function normalizeSignalKBaseUrl(baseUrl) {
   }
 }
 
+function getTimezoneOffsetMinutes() {
+  // JS getTimezoneOffset: UTC - Local, we expose Local - UTC for easier math on watch.
+  return -new Date().getTimezoneOffset();
+}
+
 function withTimeout(promise, timeoutMs) {
   let timeoutId = null;
   const timeoutPromise = new Promise((_, reject) => {
@@ -239,6 +245,14 @@ AppSideService(
       if (request.method === SIGNAL_K_BASE_URL_METHOD) {
         respond(null, {
           baseUrl: this.getSignalKBaseUrl(),
+        });
+        return;
+      }
+
+      if (request.method === TIMEZONE_OFFSET_METHOD) {
+        respond(null, {
+          offsetMinutes: getTimezoneOffsetMinutes(),
+          source: "app-side",
         });
         return;
       }

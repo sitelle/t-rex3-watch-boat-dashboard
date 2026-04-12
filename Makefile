@@ -1,8 +1,9 @@
-.PHONY: launch-signalk sim-deploy device-deploy build ensure-simulator
+.PHONY: launch-signalk sim-deploy device-deploy build start-simulator
 
 SIGNALK_CMD := signalk-server
 BUILD_CMD := zeus build
 DEPLOY_CMD := zeus preview
+DEPLOY_SIMU_CMD := zeus dev
 SIMULATOR_PROCESS := /Applications/simulator.app/Contents/MacOS/simulator
 SIMULATOR_LAUNCH := cd /Applications/simulator.app/Contents/MacOS && sudo -s ./simulator
 
@@ -14,18 +15,18 @@ build:
 	@echo "[build] Build du projet..."
 	@$(BUILD_CMD)
 
-ensure-simulator:
+start-simulator:
 	@if pgrep -f "$(SIMULATOR_PROCESS)" >/dev/null; then \
-		echo "[sim-deploy] Simulateur deja lance, on le conserve."; \
+		echo "[sim-deploy] Simulateur deja lance"; \
 	else \
 		echo "[sim-deploy] Simulateur non detecte, lancement avec droits root..."; \
-		nohup sh -c '$(SIMULATOR_LAUNCH)' >/tmp/zepp-simulator.log 2>&1 &; \
+		nohup sh -c '$(SIMULATOR_LAUNCH)' >/tmp/zepp-simulator.log 2>&1 & \
 		sleep 2; \
 	fi
 
-sim-deploy: build ensure-simulator
+sim-deploy: build 
 	@echo "[sim-deploy] Deploiement vers le simulateur..."
-	@$(DEPLOY_CMD)
+	@$(DEPLOY_SIMU_CMD)
 
 device-deploy: build
 	@echo "[device-deploy] Deploiement vers la montre physique..."

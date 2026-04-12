@@ -9,13 +9,28 @@ Le document [`docs/architecture.md`](docs/architecture.md) decrit l'architecture
 
 ## Prerequis
 
-Le poste de developpement doit fournir Node.js, npm et Zeus CLI.
+Le poste de developpement doit fournir Node.js, npm, ngrok et Zeus CLI.
 
 La commande suivante installe Zeus CLI et les dependances du projet:
 
 ```bash
 npm install -g @zeppos/zeus-cli
 npm install
+```
+
+Ngrok pemet de créer un tunnel privé entre le téléphone et le mac pour faciliter les tests entre le mac et le téléphone. 
+Sur le bateau, on ne passera pas par ngrok. On se connectera directement au réseau fourni par la box NKE
+
+Pour installer ngrok, 
+
+```bash
+brew install ngrok
+```
+
+puis, se connecter sur https://dashboard.ngrok.com/ pour récupérer un token 
+
+```bash
+ngrok config add-authtoken change-to-authorisation-token
 ```
 
 ## Commandes utiles
@@ -66,6 +81,8 @@ zepp-application/
 ├── setting/index.js
 ├── app.json
 ├── assets/
+│   └── raw/
+│       └── modeles_meteo.json
 ├── docs/architecture.md
 ├── page/
 │   ├── gt/home/index.page.js
@@ -75,7 +92,8 @@ zepp-application/
 └── utils/
     ├── config.js
     ├── settings.js
-    └── signal-k.js
+    ├── signal-k.js
+    └── weather-models.js
 ```
 
 ## Configuration rapide
@@ -84,6 +102,7 @@ zepp-application/
 2. Le fichier `app.json` definit la configuration applicative, les cibles et les permissions.
 3. Le panneau `Admin` sur la montre permet de modifier la frequence de rafraichissement.
 4. L'URL Signal K se configure dans la page `Settings` de l'application dans Zepp Mobile.
+5. Les donnees metier statiques embarquees se rangent dans `assets/raw/`.
 
 ## Ressources
 
